@@ -18,6 +18,7 @@ calls, no changes to how the agent reasons.
 | `extensions/ctrl-p-menu.ts` | `ctrl+p` opens a quick model/thinking menu instead of cycling models. Requires `keybindings.json` to free the key. |
 | `extensions/core-patch.ts` | Adds `switchSession`/`newSession` to non-command extension contexts so a **click** on a tab can switch sessions. Patches Pi's bundle in place and re-applies after updates (warns on version drift). |
 | `extensions/thinking-preview.ts` | While thinking is collapsed, the hidden-thinking label shows the tail of the model's reasoning on one line. |
+| `extensions/ask-user.ts` | `ask_user` tool: the model asks a question and waits for the answer in the TUI (arrow-select options or free text), like opencode's. |
 | `extensions/omp-look.ts` | The eight-glyph thinking spinner (`✻ ✼ ❉ ❊ ✺ ✹ ✸ ✶`). Purely cosmetic. |
 | `extensions/repatch.ts` | Re-applies the patches below after a package update, and refuses to when the package version changed. |
 | `AGENTS.md` | Global agent instructions (Spanish, informal, verification-first, respects build time). Edit or ignore. |

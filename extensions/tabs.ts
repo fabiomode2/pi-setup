@@ -100,17 +100,16 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	class TabsColumn implements Component {
-		private rows: ("tab" | "collapse" | "agent" | "fill")[] = [];
+		private rows: ("tab" | "collapse" | "agent")[] = [];
 
 		constructor(private readonly ctx: ExtensionContext) {}
 
 		render(width: number): string[] {
 			const theme = this.ctx.ui.theme;
-			const tabs = entry().tabs;
 			const body: { text: string; kind: "tab" | "agent" | "collapse" }[] = [];
 			this.rows = [];
 
-			tabs.forEach((tab, index) => {
+			entry().tabs.forEach((tab, index) => {
 				const isActiveTab = tab.path === active;
 				const unread = isUnread(tab);
 				const glyph = isActiveTab && busy ? SPINNER[spinnerIndex % SPINNER.length] : unread ? "●" : "✓";
@@ -124,9 +123,8 @@ export default function (pi: ExtensionAPI) {
 				body.push({ text, kind: "tab" });
 			});
 
-			const expanded = (this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() === true;
-			if (expanded) {
-				body.push({ text: this.ctx.ui.theme.fg("warning", " ⊟ colapsar todo"), kind: "collapse" });
+			if ((this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() === true) {
+				body.push({ text: theme.fg("warning", " ⊟ colapsar todo"), kind: "collapse" });
 			}
 
 			let shown = 0;
@@ -136,32 +134,13 @@ export default function (pi: ExtensionAPI) {
 				shown++;
 			}
 
-			// Todas las filas miden lo mismo: bloque rectangular, sin bordes irregulares.
-			const pad = (text: string) => {
-				const gap = Math.max(0, COLUMN_WIDTH - 2 - visibleWidth(text));
-				return `${theme.fg("borderMuted", "│")} ${text}${" ".repeat(gap)}`;
-			};
-
-			const bar = ["▌", "▍", "▎", "▏"][spinnerIndex % 4]!;
-			const lines: string[] = [];
-
-			// Relleno por encima: la barra sube hasta donde deja el widget.
-			const termRows = (process.stdout as unknown as { rows?: number }).rows ?? 40;
-			const fill = Math.max(0, Math.min(body.length + 10, termRows - 12) - body.length);
-			for (let i = 0; i < fill; i++) {
-				lines.push(theme.fg("borderMuted", "│"));
-				this.rows.push("fill" as never);
-			}
-
-			for (const row of body) {
-				lines.push(pad(row.text));
-				this.rows.push(row.kind);
-			}
-
-			return lines.map((line) => {
-				const gap = Math.max(0, width - visibleWidth(line) - 2);
-				return `${" ".repeat(gap)}${theme.fg("accent", bar)}${line}`;
+			// Todas las filas ocupan exactamente el mismo ancho: bloque rectangular.
+			const lines = body.map((row) => {
+				const gap = Math.max(0, COLUMN_WIDTH - 2 - visibleWidth(row.text));
+				return `${theme.fg("borderAccent", "│")} ${row.text}${" ".repeat(gap)}`;
 			});
+
+			return lines.map((line) => `${" ".repeat(Math.max(0, width - visibleWidth(line)))}${line}`);
 		}
 
 		handleMouse(event: TuiMouseEvent) {
