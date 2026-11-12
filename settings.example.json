@@ -1,0 +1,17 @@
+{
+  "theme": "opal-vespers",
+  "defaultThinkingLevel": "max",
+  "hideThinkingBlock": true,
+  "packages": [
+    "npm:pi-minimalist",
+    "npm:awesome-pi-themes",
+    "npm:pi-subagents-lite",
+    "npm:pi-hermes-memory",
+    "npm:@underactive/pi-topping-splash",
+    "npm:@underactive/pi-topping-web-tools"
+  ],
+  "minimalist": {
+    "preset": "max",
+    "activitySummary": "tools"
+  }
+}

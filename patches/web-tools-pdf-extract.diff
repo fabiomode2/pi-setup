@@ -1,0 +1,19 @@
+--- a/npm/node_modules/@underactive/pi-topping-web-tools/src/pdf-extract.ts
++++ b/npm/node_modules/@underactive/pi-topping-web-tools/src/pdf-extract.ts
+@@ -7,7 +7,6 @@
+ import { readFile, realpath, stat } from "node:fs/promises";
+ import { fileURLToPath } from "node:url";
+ import { Type } from "typebox";
+-import { extractText, getDocumentProxy } from "unpdf";
+ import { combineSignals } from "./abort-utils.ts";
+ import { isInsideCwd, isPreapprovedHost, permissionKey } from "./permissions.ts";
+ import { requestHostPermission } from "./permission-prompt.ts";
+@@ -190,6 +189,8 @@
+ 		throw new Error("Content is not a PDF (missing %PDF- header).");
+ 	}
+ 
++	// unpdf arrastra PDF.js entero: se carga solo cuando hace falta.
++	const { extractText, getDocumentProxy } = await import("unpdf");
+ 	// PDF.js rejects Buffer outright, and copying avoids handing it a pooled
+ 	// ArrayBuffer it may detach out from under other Buffer views.
+ 	const pdf = await getDocumentProxy(new Uint8Array(bytes), { maxImageSize: MAX_IMAGE_SIZE });
