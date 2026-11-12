@@ -14,11 +14,13 @@ calls, no changes to how the agent reasons.
 | `extensions/tabs.ts` | Session tabs: several sessions open in one window, a tab bar above the editor, `/tabs` menu, `alt+1…9` to jump, `alt+.`/`alt+,` to cycle. Persists per directory in `pi-tabs.json`. |
 | `extensions/tps.ts` | Real output TPS. Live value while streaming, turn average when the run settles. Counts provider-reported `usage.output` over real generation time, discarding server stalls > 300 ms. |
 | `extensions/cache-ttl.ts` | Prompt-cache countdown in the status bar (`⏳ cache 4:42`), green → yellow → `cache expired`. Uses `model.promptCache.short`, 5 min fallback. |
+| `extensions/bash-eta.ts` | Estimated duration in the bash tool row: `[⏱ 8s] · ~15s · máx 1m 00s`. Learns per-command averages locally (no model calls) and uses the agent’s `timeout` as a ceiling. |
+| `extensions/ctrl-p-menu.ts` | `ctrl+p` opens a quick model/thinking menu instead of cycling models. Requires `keybindings.json` to free the key. |
 | `extensions/omp-look.ts` | The eight-glyph thinking spinner (`✻ ✼ ❉ ❊ ✺ ✹ ✸ ✶`). Purely cosmetic. |
 | `extensions/repatch.ts` | Re-applies the patches below after a package update, and refuses to when the package version changed. |
 | `AGENTS.md` | Global agent instructions (Spanish, informal, verification-first, respects build time). Edit or ignore. |
 | `settings.example.json` | Settings keys worth copying: thinking level, hidden thinking blocks, package list, minimalist preset. |
-| `patches/` | Four diffs against upstream packages: lazy-load Playwright, turndown/linkedom/readability and unpdf so startup is ~0.9 s faster; make the splash fill the window and respect terminal transparency. |
+| `patches/` | Five diffs against upstream packages: lazy-load Playwright, turndown/linkedom/readability and unpdf so startup is ~0.9 s faster; make the splash fill the window and respect terminal transparency. |
 
 ## Install
 
@@ -40,6 +42,7 @@ pi install npm:pi-subagents-lite
 pi install npm:pi-hermes-memory
 pi install npm:@underactive/pi-topping-splash
 pi install npm:@underactive/pi-topping-web-tools
+pi install npm:pi-subagents-lite
 npx playwright install chromium   # only if you want the web_browser tool
 ```
 
