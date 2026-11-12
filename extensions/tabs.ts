@@ -136,8 +136,8 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// Botón flotante de colapsar: solo cuando hay tools/thinking expandidos.
-			const expanded = (this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() === true;
-			if (expanded) {
+			// Siempre visible: el estado de expansión no es fiable desde un widget.
+			if (true) {
 				rows.push({ text: theme.fg("warning", "⊟ colapsar todo") });
 				this.rows.push("collapse");
 			}
