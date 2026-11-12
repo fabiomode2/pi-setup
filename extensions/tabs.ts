@@ -100,15 +100,14 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	class TabsColumn implements Component {
-		constructor(
-			private readonly ctx: ExtensionContext,
-			private readonly onPick: (index: number) => void,
-		) {}
+		private rows: ("tab" | "collapse" | "agent" | "fill")[] = [];
+
+		constructor(private readonly ctx: ExtensionContext) {}
 
 		render(width: number): string[] {
 			const theme = this.ctx.ui.theme;
 			const tabs = entry().tabs;
-			const rows: { text: string; index?: number }[] = [];
+			const body: { text: string; kind: "tab" | "agent" | "collapse" }[] = [];
 			this.rows = [];
 
 			tabs.forEach((tab, index) => {
@@ -116,50 +115,82 @@ export default function (pi: ExtensionAPI) {
 				const unread = isUnread(tab);
 				const glyph = isActiveTab && busy ? SPINNER[spinnerIndex % SPINNER.length] : unread ? "●" : "✓";
 				const color = isActiveTab ? "accent" : unread ? "warning" : "success";
-				const label = `${index + 1}  ${tab.name}`;
-				const room = COLUMN_WIDTH - 6;
+				const label = `${index + 1} ${tab.name}`;
+				const room = COLUMN_WIDTH - 4;
 				const clipped = label.length > room ? `${label.slice(0, room - 1)}…` : label;
 				const text = isActiveTab
-					? theme.bg("selectedBg", theme.fg("accent", ` ${glyph} ${clipped} `))
+					? theme.bg("selectedBg", theme.fg("accent", ` ${glyph} ${clipped}`))
 					: theme.fg(color, ` ${glyph} `) + theme.fg(unread ? "text" : "dim", clipped);
-				rows.push({ text, index });
-				this.rows.push("tab");
+				body.push({ text, kind: "tab" });
 			});
 
-			// Subagentes en marcha, como ramas del árbol.
+			const expanded = (this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() === true;
+			if (expanded) {
+				body.push({ text: this.ctx.ui.theme.fg("warning", " ⊟ colapsar todo"), kind: "collapse" });
+			}
+
 			let shown = 0;
 			for (const name of agents.values()) {
 				if (shown >= 3) break;
-				rows.push({ text: theme.fg("thinkingText", `   ↳ ${name.slice(0, COLUMN_WIDTH - 8)}`) });
-				this.rows.push("agent" as never);
+				body.push({ text: theme.fg("thinkingText", `  ↳ ${name.slice(0, COLUMN_WIDTH - 8)}`), kind: "agent" });
 				shown++;
 			}
 
-			// Botón flotante de colapsar: solo cuando hay tools/thinking expandidos.
-			// Siempre visible: el estado de expansión no es fiable desde un widget.
-			if (true) {
-				rows.push({ text: theme.fg("warning", "⊟ colapsar todo") });
-				this.rows.push("collapse");
-			}
+			// Todas las filas miden lo mismo: bloque rectangular, sin bordes irregulares.
+			const pad = (text: string) => {
+				const gap = Math.max(0, COLUMN_WIDTH - 2 - visibleWidth(text));
+				return `${theme.fg("borderMuted", "│")} ${text}${" ".repeat(gap)}`;
+			};
 
 			const bar = ["▌", "▍", "▎", "▏"][spinnerIndex % 4]!;
-			return rows.map(({ text }) => {
-				const pad = Math.max(0, width - visibleWidth(text) - 2);
-				return `${" ".repeat(pad)}${theme.fg("accent", bar)}${theme.fg("borderMuted", " ")}${text}`;
+			const lines: string[] = [];
+
+			// Relleno por encima: la barra sube hasta donde deja el widget.
+			const termRows = (process.stdout as unknown as { rows?: number }).rows ?? 40;
+			const fill = Math.max(0, Math.min(body.length + 10, termRows - 12) - body.length);
+			for (let i = 0; i < fill; i++) {
+				lines.push(theme.fg("borderMuted", "│"));
+				this.rows.push("fill" as never);
+			}
+
+			for (const row of body) {
+				lines.push(pad(row.text));
+				this.rows.push(row.kind);
+			}
+
+			return lines.map((line) => {
+				const gap = Math.max(0, width - visibleWidth(line) - 2);
+				return `${" ".repeat(gap)}${theme.fg("accent", bar)}${line}`;
 			});
 		}
 
 		handleMouse(event: TuiMouseEvent) {
-			// El click sintetizado no siempre llega (el layout se repinta al pulsar):
-			// actuamos en la pulsación.
 			if (event.type !== "press" && event.type !== "click") return undefined;
 			if (event.button !== "left") return undefined;
-			const rows = entry().tabs;
-			const row = rows[event.y];
-			if (!row) return undefined;
+			const kind = this.rows[event.y];
+			if (kind === "collapse") {
+				(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
+				return { handled: true };
+			}
+			if (kind !== "tab") return undefined;
 			this.onPick(event.y);
-			// Devolvemos false: si marcamos el press como handled, Pi no consume
-			// el release y acaba escrito en el editor.
+			return { handled: true };
+		}
+
+		onPick: (index: number) => void = () => {};
+		invalidate() {}
+	}
+
+	class CollapseButton implements Component {
+		constructor(private readonly ctx: ExtensionContext) {}
+
+		render(): string[] {
+			return [this.ctx.ui.theme.bg("selectedBg", this.ctx.ui.theme.fg("warning", " ⊟ colapsar todo "))];
+		}
+
+		handleMouse(event: TuiMouseEvent) {
+			if (event.type !== "press" && event.type !== "click") return undefined;
+			(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
 			return { handled: true };
 		}
 
@@ -181,7 +212,9 @@ export default function (pi: ExtensionAPI) {
 			widgetInstalled = true;
 			ctx.ui.setWidget("tabs", (tui) => {
 				requestRender = () => tui.requestRender();
-				return new TabsColumn(ctx, (index) => requestSwitch(ctx, index));
+				const column = new TabsColumn(ctx);
+				column.onPick = (index) => requestSwitch(ctx, index);
+				return column;
 			});
 		}
 		requestRender?.();
