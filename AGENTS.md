@@ -42,6 +42,10 @@
 - Al terminar, actualiza el .md de seguimiento (task.md / fixes.md / logs.md): qué se hizo, qué falta, qué sigue roto.
 - Si dicto una idea o arquitectura, plásmala en un .md antes de picar código.
 
+## Sesiones
+
+- Al empezar una tarea nueva, si tienes la tool `set_session_title`, llámala una vez con un título de 3-5 palabras que resuma la tarea. Es el nombre que se ve en la lista de pestañas.
+
 ## Git
 
 - No hagas commit ni push salvo que lo pida.

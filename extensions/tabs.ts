@@ -13,6 +13,7 @@
  * Atajos: ctrl+alt+←/→, alt+1…9, alt+. / alt+,
  */
 import type { Component, ExtensionAPI, ExtensionContext, TuiMouseEvent } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -50,6 +51,11 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	// Varias ventanas de Pi comparten pi-tabs.json: releemos antes de cada cambio
+	// para no pisar las pestañas que haya abierto otro proceso.
+	const refresh = () => {
+		store = loadStore();
+	};
 	const entry = () => (store[cwd] ??= { tabs: [] });
 	const setActive = (path: string | undefined) => {
 		active = path;
@@ -99,7 +105,7 @@ export default function (pi: ExtensionAPI) {
 			let shown = 0;
 			for (const name of agents.values()) {
 				if (shown >= 3) break;
-				rows.push({ text: theme.fg("thinkingText", `   ↳ ${name.slice(0, COLUMN_WIDTH - 6)}`) });
+				rows.push({ text: theme.fg("thinkingText", `   ↳ ${name.slice(0, COLUMN_WIDTH - 8)}`) });
 				shown++;
 			}
 
@@ -150,6 +156,7 @@ export default function (pi: ExtensionAPI) {
 	 * Desde un atajo o un clic dejamos el comando escrito en el editor.
 	 */
 	const requestSwitch = (ctx: ExtensionContext, target: Tab) => {
+		refresh();
 		const tabs = entry().tabs;
 		const index = tabs.indexOf(target);
 		if (index === -1) return;
@@ -165,6 +172,7 @@ export default function (pi: ExtensionAPI) {
 
 	const switchTo = async (ctx: ExtensionContext, target: Tab) => {
 		if (target.path === active) return;
+		refresh();
 		try {
 			const result = await ctx.switchSession(target.path, {
 				withSession: async (freshCtx) => {
@@ -200,6 +208,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const closeCurrent = async (ctx: ExtensionContext) => {
+		refresh();
 		const tabs = entry().tabs;
 		const index = tabs.findIndex((tab) => tab.path === active);
 		if (index === -1) return;
@@ -217,6 +226,22 @@ export default function (pi: ExtensionAPI) {
 		await switchTo(ctx, next);
 	};
 
+	const shorten = (text: string): string => (text.length > 20 ? `${text.slice(0, 19)}…` : text);
+
+	const firstUserText = (ctx: ExtensionContext): string | undefined => {
+		for (const entryItem of ctx.sessionManager.getBranch()) {
+			if (entryItem.type !== "message" || entryItem.message.role !== "user") continue;
+			const text = (entryItem.message.content as { type: string; text?: string }[])
+				.filter((part) => part.type === "text")
+				.map((part) => part.text ?? "")
+				.join(" ")
+				.replace(/\s+/g, " ")
+				.trim();
+			if (text.length >= 3) return text;
+		}
+		return undefined;
+	};
+
 	const labelFor = (ctx: ExtensionContext): string => {
 		const name = ctx.sessionManager.getSessionName();
 		if (name) return name;
@@ -226,13 +251,24 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
+		refresh();
 		cwd = ctx.sessionManager.getCwd();
 		// Sin filtrar por existsSync: una sesión recién creada aún no tiene .jsonl.
 		const tabs = [...(store[cwd]?.tabs ?? [])];
 		store[cwd] = { tabs, active: store[cwd]?.active };
 		const file = ctx.sessionManager.getSessionFile();
 		if (file) {
-			if (!tabs.some((tab) => tab.path === file)) tabs.push({ path: file, name: labelFor(ctx), auto: true });
+			let tab = tabs.find((item) => item.path === file);
+			if (!tab) {
+				tab = { path: file, name: labelFor(ctx), auto: true };
+				tabs.push(tab);
+			}
+			// Al volver con /resume el nombre puede seguir siendo el id: usa el
+			// primer mensaje de la sesión y, si no hay, deja que el modelo lo ponga.
+			if (tab.auto) {
+				const firstUser = firstUserText(ctx);
+				if (firstUser) tab.name = shorten(firstUser);
+			}
 			setActive(file);
 		}
 		widgetInstalled = false;
@@ -337,6 +373,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_end", async (event, ctx) => {
 		if (event.message.role !== "user") return;
+		refresh();
 		const tab = entry().tabs.find((item) => item.path === active);
 		if (!tab?.auto) return;
 		const text = event.message.content
@@ -352,23 +389,62 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
+		refresh();
 		const tab = entry().tabs.find((item) => item.path === active);
 		if (tab?.auto) await generateTitle(ctx, tab);
+	});
+
+	// El payload de subagentes no trae nombre legible: lo cogemos del `description`
+	// que el padre pasa a la tool Agent justo antes de lanzarlo.
+	let pendingAgentLabel: string | undefined;
+	pi.on("tool_execution_start", async (event) => {
+		if (event.toolName !== "Agent") return;
+		const args = (event.args ?? {}) as { description?: string; prompt?: string };
+		const label = (args.description ?? args.prompt ?? "").replace(/\s+/g, " ").trim();
+		pendingAgentLabel = label ? label.slice(0, 30) : undefined;
 	});
 
 	// Subagentes de pi-subagents-lite (convención subagents:*)
 	pi.events.on("subagents:child:session-created", (payload: unknown) => {
 		const data = payload as { sessionId?: string; name?: string };
-		if (data?.sessionId) agents.set(data.sessionId, data.name ?? data.sessionId.slice(0, 8));
+		if (data?.sessionId) {
+			agents.set(data.sessionId, pendingAgentLabel ?? data.name ?? data.sessionId.slice(0, 8));
+			pendingAgentLabel = undefined;
+		}
 	});
 	pi.events.on("subagents:child:disposed", (payload: unknown) => {
 		const data = payload as { sessionId?: string };
 		if (data?.sessionId) agents.delete(data.sessionId);
 	});
 
+	// El modelo puede poner título a la sesión cuando le parezca.
+	pi.registerTool({
+		name: "set_session_title",
+		label: "Set session title",
+		description: "Pon un título corto (3-5 palabras) a la sesión actual, para identificarla en la lista de pestañas. Úsala una vez al principio, cuando ya sepas de qué va la tarea.",
+		parameters: Type.Object({
+			title: Type.String({ description: "Título corto, sin comillas" }),
+		}),
+		execute: async (_toolCallId: string, params: { title?: string }) => {
+			const raw = (params.title ?? "").replace(/\s+/g, " ").replace(/^["'«»]+|["'«»]+$/g, "").trim();
+			if (!raw) return { content: [{ type: "text", text: "título vacío" }], isError: true };
+			const name = raw.slice(0, 24);
+			refresh();
+			const tab = entry().tabs.find((item) => item.path === active);
+			if (tab) {
+				tab.name = name;
+				tab.auto = false;
+				save();
+			}
+			pi.setSessionName(name);
+			return { content: [{ type: "text", text: `título: ${name}` }] };
+		},
+	});
+
 	pi.registerCommand("tabs", {
 		description: "Pestañas de sesión: listar, crear, cerrar o renombrar",
 		handler: async (args, ctx) => {
+			refresh();
 			const sub = (args ?? "").trim();
 			if (sub === "new") return void (await ctx.newSession({}));
 			if (sub === "next") {
