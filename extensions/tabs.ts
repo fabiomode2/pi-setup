@@ -109,6 +109,7 @@ export default function (pi: ExtensionAPI) {
 			const theme = this.ctx.ui.theme;
 			const tabs = entry().tabs;
 			const rows: { text: string; index?: number }[] = [];
+			this.rows = [];
 
 			tabs.forEach((tab, index) => {
 				const isActiveTab = tab.path === active;
@@ -122,6 +123,7 @@ export default function (pi: ExtensionAPI) {
 					? theme.bg("selectedBg", theme.fg("accent", ` ${glyph} ${clipped} `))
 					: theme.fg(color, ` ${glyph} `) + theme.fg(unread ? "text" : "dim", clipped);
 				rows.push({ text, index });
+				this.rows.push("tab");
 			});
 
 			// Subagentes en marcha, como ramas del árbol.
@@ -129,7 +131,15 @@ export default function (pi: ExtensionAPI) {
 			for (const name of agents.values()) {
 				if (shown >= 3) break;
 				rows.push({ text: theme.fg("thinkingText", `   ↳ ${name.slice(0, COLUMN_WIDTH - 8)}`) });
+				this.rows.push("agent" as never);
 				shown++;
+			}
+
+			// Botón flotante de colapsar: solo cuando hay tools/thinking expandidos.
+			const expanded = (this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() === true;
+			if (expanded) {
+				rows.push({ text: theme.fg("warning", "⊟ colapsar todo") });
+				this.rows.push("collapse");
 			}
 
 			const bar = ["▌", "▍", "▎", "▏"][spinnerIndex % 4]!;
