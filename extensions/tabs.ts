@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 type Tab = { path: string; name: string; auto?: boolean; seenAt?: number };
 
 const STORE_PATH = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "pi-tabs.json");
-const COLUMN_WIDTH = 28;
+const COLUMN_WIDTH = 36;
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 function loadStore(): Record<string, { tabs: Tab[]; active?: string }> {
@@ -57,6 +57,29 @@ export default function (pi: ExtensionAPI) {
 		store = loadStore();
 	};
 	const entry = () => (store[cwd] ??= { tabs: [] });
+
+	/** Una pestaña sin ningún mensaje de usuario no molesta: se descarta. */
+	const isEmptySession = (path: string): boolean => {
+		try {
+			const raw = readFileSync(path, "utf8");
+			for (const line of raw.split("\n")) {
+				if (line.includes('"role":"user"')) return false;
+			}
+			return true;
+		} catch {
+			return true; // sin fichero todavía: no hay nada escrito
+		}
+	};
+
+	const dropEmptyTabs = (keep?: string) => {
+		const tabs = entry().tabs;
+		const kept = tabs.filter((tab) => tab.path === keep || !isEmptySession(tab.path));
+		if (kept.length !== tabs.length) {
+			store[cwd] = { tabs: kept, active };
+			save();
+		}
+		return kept;
+	};
 	const setActive = (path: string | undefined) => {
 		active = path;
 		entry().active = path;
@@ -92,8 +115,8 @@ export default function (pi: ExtensionAPI) {
 				const unread = isUnread(tab);
 				const glyph = isActiveTab && busy ? SPINNER[spinnerIndex % SPINNER.length] : unread ? "●" : "✓";
 				const color = isActiveTab ? "accent" : unread ? "warning" : "success";
-				const label = `${index + 1} ${tab.name}`;
-				const room = COLUMN_WIDTH - 4;
+				const label = `${index + 1}  ${tab.name}`;
+				const room = COLUMN_WIDTH - 6;
 				const clipped = label.length > room ? `${label.slice(0, room - 1)}…` : label;
 				const text = isActiveTab
 					? theme.bg("selectedBg", theme.fg("accent", ` ${glyph} ${clipped} `))
@@ -109,18 +132,24 @@ export default function (pi: ExtensionAPI) {
 				shown++;
 			}
 
+			const bar = ["▌", "▍", "▎", "▏"][spinnerIndex % 4]!;
 			return rows.map(({ text }) => {
-				const pad = Math.max(0, width - visibleWidth(text));
-				return `${" ".repeat(pad)}${text}`;
+				const pad = Math.max(0, width - visibleWidth(text) - 2);
+				return `${" ".repeat(pad)}${theme.fg("accent", bar)}${theme.fg("borderMuted", " ")}${text}`;
 			});
 		}
 
 		handleMouse(event: TuiMouseEvent) {
-			if (event.type !== "click" || event.button !== "left") return undefined;
+			// El click sintetizado no siempre llega (el layout se repinta al pulsar):
+			// actuamos en la pulsación.
+			if (event.type !== "press" && event.type !== "click") return undefined;
+			if (event.button !== "left") return undefined;
 			const rows = entry().tabs;
 			const row = rows[event.y];
 			if (!row) return undefined;
 			this.onPick(event.y);
+			// Devolvemos false: si marcamos el press como handled, Pi no consume
+			// el release y acaba escrito en el editor.
 			return { handled: true };
 		}
 
@@ -142,10 +171,7 @@ export default function (pi: ExtensionAPI) {
 			widgetInstalled = true;
 			ctx.ui.setWidget("tabs", (tui) => {
 				requestRender = () => tui.requestRender();
-				return new TabsColumn(ctx, (index) => {
-					const target = entry().tabs[index];
-					if (target) requestSwitch(ctx, target);
-				});
+				return new TabsColumn(ctx, (index) => requestSwitch(ctx, index));
 			});
 		}
 		requestRender?.();
@@ -155,20 +181,26 @@ export default function (pi: ExtensionAPI) {
 	 * Solo un contexto de comando puede cambiar de sesión (ExtensionCommandContext).
 	 * Desde un atajo o un clic dejamos el comando escrito en el editor.
 	 */
-	const requestSwitch = (ctx: ExtensionContext, target: Tab) => {
+	const requestSwitch = (ctx: ExtensionContext, index: number) => {
 		refresh();
-		const tabs = entry().tabs;
-		const index = tabs.indexOf(target);
-		if (index === -1) return;
-		// Solo un contexto de comando puede cambiar de sesión, así que dejamos el
-		// comando en el editor y enviamos el Enter: /tabs N se ejecuta solo.
-		ctx.ui.setEditorText(`/tabs ${index + 1}`);
+		const target = entry().tabs[index];
+		if (!target) return;
+		// Con el parche del bundle, hasta el contexto de un clic puede cambiar de
+		// sesión; si no está, se ejecuta el comando como si se tecleara.
+		if (typeof (ctx as unknown as { switchSession?: unknown }).switchSession === "function") {
+			void switchTo(ctx, target);
+			return;
+		}
 		try {
-			(process.stdin as unknown as { unshift?: (buffer: Buffer) => void }).unshift?.(Buffer.from("\r"));
+			(process.stdin as unknown as { unshift?: (buffer: Buffer) => void }).unshift?.(
+				Buffer.from(`/tabs ${index + 1}\r`),
+			);
 		} catch {
+			ctx.ui.setEditorText(`/tabs ${index + 1}`);
 			ctx.ui.notify(`Escribe /tabs ${index + 1} y pulsa Enter`, "warning");
 		}
 	};
+
 
 	const switchTo = async (ctx: ExtensionContext, target: Tab) => {
 		if (target.path === active) return;
@@ -203,12 +235,13 @@ export default function (pi: ExtensionAPI) {
 		const tabs = entry().tabs;
 		if (tabs.length < 2) return;
 		const index = tabs.findIndex((tab) => tab.path === active);
-		const target = tabs[(index + step + tabs.length) % tabs.length]!;
-		requestSwitch(ctx, target);
+		const nextIndex = (index + step + tabs.length) % tabs.length;
+		requestSwitch(ctx, nextIndex);
 	};
 
 	const closeCurrent = async (ctx: ExtensionContext) => {
 		refresh();
+		dropEmptyTabs(active);
 		const tabs = entry().tabs;
 		const index = tabs.findIndex((tab) => tab.path === active);
 		if (index === -1) return;
@@ -246,15 +279,15 @@ export default function (pi: ExtensionAPI) {
 		const name = ctx.sessionManager.getSessionName();
 		if (name) return name;
 		const file = ctx.sessionManager.getSessionFile();
-		if (!file) return "nueva";
-		return file.split("/").pop()!.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, "").slice(0, 10);
+		if (!file) return "New Session";
+		return "New Session";
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
 		refresh();
 		cwd = ctx.sessionManager.getCwd();
 		// Sin filtrar por existsSync: una sesión recién creada aún no tiene .jsonl.
-		const tabs = [...(store[cwd]?.tabs ?? [])];
+		const tabs = dropEmptyTabs();
 		store[cwd] = { tabs, active: store[cwd]?.active };
 		const file = ctx.sessionManager.getSessionFile();
 		if (file) {
@@ -447,6 +480,20 @@ export default function (pi: ExtensionAPI) {
 			refresh();
 			const sub = (args ?? "").trim();
 			if (sub === "new") return void (await ctx.newSession({}));
+			if (sub === "resume") {
+				const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+				const sessions = await SessionManager.list(ctx.cwd);
+				const options = sessions
+					.filter((item) => item.path !== active)
+					.slice(0, 30)
+					.map((item) => item.name || item.path.split("/").pop() || item.path);
+				const picked = await ctx.ui.select("Reanudar sesión", options);
+				if (!picked) return;
+				const target = sessions.filter((item) => item.path !== active)[options.indexOf(picked)];
+				if (!target) return;
+				await ctx.switchSession(target.path);
+				return;
+			}
 			if (sub === "next") {
 				const tabs = entry().tabs;
 				const index = tabs.findIndex((tab) => tab.path === active);
@@ -497,10 +544,7 @@ export default function (pi: ExtensionAPI) {
 	for (let i = 1; i <= 9; i++) {
 		pi.registerShortcut(`alt+${i}`, {
 			description: `Ir a la pestaña ${i}`,
-			handler: (ctx) => {
-				const target = entry().tabs[i - 1];
-				if (target) requestSwitch(ctx, target);
-			},
+			handler: (ctx) => requestSwitch(ctx, i - 1),
 		});
 	}
 	pi.registerShortcut("alt+.", { description: "Pestaña siguiente", handler: (ctx) => stepRequest(ctx, 1) });
