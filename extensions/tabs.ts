@@ -153,8 +153,14 @@ export default function (pi: ExtensionAPI) {
 		const tabs = entry().tabs;
 		const index = tabs.indexOf(target);
 		if (index === -1) return;
+		// Solo un contexto de comando puede cambiar de sesión, así que dejamos el
+		// comando en el editor y enviamos el Enter: /tabs N se ejecuta solo.
 		ctx.ui.setEditorText(`/tabs ${index + 1}`);
-		ctx.ui.notify(`Enter para ir a «${target.name}»`, "info");
+		try {
+			(process.stdin as unknown as { unshift?: (buffer: Buffer) => void }).unshift?.(Buffer.from("\r"));
+		} catch {
+			ctx.ui.notify(`Escribe /tabs ${index + 1} y pulsa Enter`, "warning");
+		}
 	};
 
 	const switchTo = async (ctx: ExtensionContext, target: Tab) => {
@@ -221,7 +227,8 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		cwd = ctx.sessionManager.getCwd();
-		const tabs = [...(store[cwd]?.tabs ?? [])].filter((tab) => !tab.path || existsSync(tab.path) || tab.path === active);
+		// Sin filtrar por existsSync: una sesión recién creada aún no tiene .jsonl.
+		const tabs = [...(store[cwd]?.tabs ?? [])];
 		store[cwd] = { tabs, active: store[cwd]?.active };
 		const file = ctx.sessionManager.getSessionFile();
 		if (file) {
