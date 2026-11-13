@@ -1,0 +1,58 @@
+[
+  {
+    "package": "@underactive/pi-topping-web-tools",
+    "version": "0.4.0",
+    "target": "npm/node_modules/@underactive/pi-topping-web-tools/src/web-browser/browser-manager.ts",
+    "stored": "browser-manager.ts",
+    "marker": "getChromium()"
+  },
+  {
+    "package": "@underactive/pi-topping-web-tools",
+    "version": "0.4.0",
+    "target": "npm/node_modules/@underactive/pi-topping-web-tools/src/fetch-markdown.ts",
+    "stored": "fetch-markdown.ts",
+    "marker": "await import(\"turndown\")"
+  },
+  {
+    "package": "@underactive/pi-topping-web-tools",
+    "version": "0.4.0",
+    "target": "npm/node_modules/@underactive/pi-topping-web-tools/src/pdf-extract.ts",
+    "stored": "pdf-extract.ts",
+    "marker": "await import(\"unpdf\")"
+  },
+  {
+    "package": "@underactive/pi-topping-splash",
+    "version": "0.6.1",
+    "target": "npm/node_modules/@underactive/pi-topping-splash/src/splash.ts",
+    "stored": "splash.ts",
+    "marker": "SWATCH_BACKDROP_BG"
+  },
+  {
+    "package": "pi-minimalist",
+    "version": "0.4.0",
+    "target": "npm/node_modules/pi-minimalist/src/tool-renderer.ts",
+    "stored": "minimalist-tool-renderer.ts",
+    "marker": "__piBashEtaBadge"
+  },
+  {
+    "package": "pi-minimalist",
+    "version": "0.4.0",
+    "target": "npm/node_modules/pi-minimalist/src/row.ts",
+    "stored": "minimalist-row.ts",
+    "marker": "__piLive"
+  },
+  {
+    "package": "pi-minimalist",
+    "version": "0.4.0",
+    "target": "npm/node_modules/pi-minimalist/src/run-grouping.ts",
+    "stored": "minimalist-run-grouping.ts",
+    "marker": "__piLive"
+  },
+  {
+    "package": "@underactive/pi-topping-web-tools",
+    "version": "0.4.0",
+    "target": "npm/node_modules/@underactive/pi-topping-web-tools/src/permissions.ts",
+    "stored": "web-tools-permissions.ts",
+    "marker": "homedir()"
+  }
+]

@@ -1,17 +1,15 @@
 {
-  "theme": "opal-vespers",
-  "defaultThinkingLevel": "max",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
   "hideThinkingBlock": true,
-  "packages": [
-    "npm:pi-minimalist",
-    "npm:awesome-pi-themes",
-    "npm:pi-subagents-lite",
-    "npm:pi-hermes-memory",
-    "npm:@underactive/pi-topping-splash",
-    "npm:@underactive/pi-topping-web-tools"
-  ],
+  "defaultThinkingLevel": "max",
   "minimalist": {
     "preset": "max",
     "activitySummary": "tools"
-  }
+  },
+  "theme": "opal-vespers",
+  "modelThinkingLevels": {
+    "opencode-go/deepseek-v4.1-flash": "max"
+  },
+  "quietStartup": true
 }

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Reaplica los parches de ~/.pi/agent/patches sobre los paquetes npm instalados.
+set -euo pipefail
+AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+MANIFEST="$AGENT_DIR/patches/manifest.json"
+[ -f "$MANIFEST" ] || { echo "sin manifiesto en $MANIFEST"; exit 0; }
+
+python3 - "$AGENT_DIR" <<'PY'
+import json, os, shutil, sys
+agent = sys.argv[1]
+manifest = json.load(open(os.path.join(agent, "patches/manifest.json")))
+applied = skipped = drifted = 0
+for e in manifest:
+    target = os.path.join(agent, e["target"])
+    stored = os.path.join(agent, "patches/files", e["stored"])
+    if not (os.path.exists(target) and os.path.exists(stored)):
+        print(f"falta: {e['target']}"); continue
+    body = open(target, encoding="utf-8", errors="replace").read()
+    if e["marker"] in body:
+        skipped += 1; continue
+    pkg_json = os.path.join(agent, "npm/node_modules", *e["package"].split("/"), "package.json")
+    try:
+        version = json.load(open(pkg_json))["version"]
+    except Exception:
+        version = None
+    if version != e["version"]:
+        print(f"version distinta: {e['package']} parche={e['version']} instalado={version}")
+        drifted += 1; continue
+    shutil.copy2(stored, target)
+    applied += 1
+print(f"reaplicados={applied} ya_estaban={skipped} obsoletos={drifted}")
+PY

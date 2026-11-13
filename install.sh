@@ -17,6 +17,16 @@ for file in "$HERE"/extensions/*.ts; do
   echo "  ✓ $name"
 done
 
+echo "→ parches de paquetes + repatch"
+mkdir -p "$AGENT_DIR/patches" "$AGENT_DIR/bin"
+cp "$HERE"/patches/manifest.json "$AGENT_DIR/patches/manifest.json"
+cp -r "$HERE"/patches/files "$AGENT_DIR/patches/"
+cp "$HERE"/bin/repatch "$AGENT_DIR/bin/repatch" && chmod +x "$AGENT_DIR/bin/repatch"
+echo "  ✓ $(python3 -c "import json;print(len(json.load(open('$HERE/patches/manifest.json'))))") parches, bin/repatch"
+
+echo "→ keybindings"
+cp "$HERE"/keybindings.json "$AGENT_DIR/keybindings.json" && echo "  ✓ keybindings.json"
+
 echo "→ mezclando settings.example.json"
 python3 - "$HERE/settings.example.json" "$AGENT_DIR/settings.json" <<'PY'
 import json, os, sys
