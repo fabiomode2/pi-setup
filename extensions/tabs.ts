@@ -38,6 +38,7 @@ export default function (pi: ExtensionAPI) {
 	let cwd = process.cwd();
 	let active: string | undefined;
 	let busy = false;
+	let expandedGuess = false;
 	let spinnerIndex = 0;
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	const agents = new Map<string, string>();
@@ -99,17 +100,19 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	class TabsColumn implements Component {
-		private rows: ("tab" | "collapse" | "agent")[] = [];
+	const WIDGET_ROWS = 6;
 
+	class TabsColumn implements Component {
 		constructor(private readonly ctx: ExtensionContext) {}
 
 		render(width: number): string[] {
 			const theme = this.ctx.ui.theme;
-			const body: { text: string; kind: "tab" | "agent" | "collapse" }[] = [];
-			this.rows = [];
+			const tabs = entry().tabs;
+			const expanded =
+				(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
 
-			entry().tabs.forEach((tab, index) => {
+			const body: string[] = [];
+			tabs.slice(0, WIDGET_ROWS - 1).forEach((tab, index) => {
 				const isActiveTab = tab.path === active;
 				const unread = isUnread(tab);
 				const glyph = isActiveTab && busy ? SPINNER[spinnerIndex % SPINNER.length] : unread ? "●" : "✓";
@@ -117,41 +120,35 @@ export default function (pi: ExtensionAPI) {
 				const label = `${index + 1} ${tab.name}`;
 				const room = COLUMN_WIDTH - 4;
 				const clipped = label.length > room ? `${label.slice(0, room - 1)}…` : label;
-				const text = isActiveTab
-					? theme.bg("selectedBg", theme.fg("accent", ` ${glyph} ${clipped}`))
-					: theme.fg(color, ` ${glyph} `) + theme.fg(unread ? "text" : "dim", clipped);
-				body.push({ text, kind: "tab" });
+				body.push(
+					isActiveTab
+						? theme.bg("selectedBg", theme.fg("accent", ` ${glyph} ${clipped}`))
+						: theme.fg(color, ` ${glyph} `) + theme.fg(unread ? "text" : "dim", clipped),
+				);
 			});
 
-			if ((this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() === true) {
-				body.push({ text: theme.fg("warning", " ⊟ colapsar todo"), kind: "collapse" });
-			}
+			if (expanded) body.push(theme.fg("warning", " ⊟ colapsar todo"));
+			while (body.length < WIDGET_ROWS) body.push("");
 
-			let shown = 0;
-			for (const name of agents.values()) {
-				if (shown >= 3) break;
-				body.push({ text: theme.fg("thinkingText", `  ↳ ${name.slice(0, COLUMN_WIDTH - 8)}`), kind: "agent" });
-				shown++;
-			}
-
-			// Todas las filas ocupan exactamente el mismo ancho: bloque rectangular.
-			const lines = body.map((row) => {
-				const gap = Math.max(0, COLUMN_WIDTH - 2 - visibleWidth(row.text));
-				return `${theme.fg("borderAccent", "│")} ${row.text}${" ".repeat(gap)}`;
+			// Alto fijo: todas las filas ocupan el mismo ancho y siempre son WIDGET_ROWS.
+			return body.slice(0, WIDGET_ROWS).map((text) => {
+				const line = `${theme.fg("borderAccent", "│")} ${text}${" ".repeat(Math.max(0, COLUMN_WIDTH - 2 - visibleWidth(text)))}`;
+				return `${" ".repeat(Math.max(0, width - visibleWidth(line)))}${line}`;
 			});
-
-			return lines.map((line) => `${" ".repeat(Math.max(0, width - visibleWidth(line)))}${line}`);
 		}
 
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "press" && event.type !== "click") return undefined;
 			if (event.button !== "left") return undefined;
-			const kind = this.rows[event.y];
-			if (kind === "collapse") {
+			const tabs = entry().tabs;
+			const expanded =
+				(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
+			if (expanded && event.y === tabs.length) {
 				(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
+				expandedGuess = false;
 				return { handled: true };
 			}
-			if (kind !== "tab") return undefined;
+			if (event.y < 0 || event.y >= Math.min(tabs.length, WIDGET_ROWS - 1)) return undefined;
 			this.onPick(event.y);
 			return { handled: true };
 		}
@@ -168,6 +165,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		handleMouse(event: TuiMouseEvent) {
+			import("node:fs").then((fs) => fs.appendFileSync("/tmp/click.log", `${JSON.stringify(event)} rows=${JSON.stringify(this.rows)}\n`)).catch(() => {});
 			if (event.type !== "press" && event.type !== "click") return undefined;
 			(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
 			return { handled: true };
@@ -189,10 +187,10 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (!widgetInstalled) {
 			widgetInstalled = true;
+			const column = new TabsColumn(ctx);
+			column.onPick = (index) => requestSwitch(ctx, index);
 			ctx.ui.setWidget("tabs", (tui) => {
 				requestRender = () => tui.requestRender();
-				const column = new TabsColumn(ctx);
-				column.onPick = (index) => requestSwitch(ctx, index);
 				return column;
 			});
 		}
@@ -393,7 +391,7 @@ export default function (pi: ExtensionAPI) {
 						},
 					],
 				},
-				{ maxTokens: 24 },
+				{ maxTokens: 24, sessionId: ctx.sessionManager.getSessionId() },
 			);
 			const result = await Promise.race([
 				call,
