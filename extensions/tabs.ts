@@ -40,6 +40,7 @@ export default function (pi: ExtensionAPI) {
 	let busy = false;
 	let expandedGuess = false;
 	let installedRows = -1;
+	let liveCtx: ExtensionContext | undefined;
 	let spinnerIndex = 0;
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	const agents = new Map<string, string>();
@@ -111,12 +112,17 @@ export default function (pi: ExtensionAPI) {
 		constructor(private readonly ctx: ExtensionContext) {}
 
 		render(width: number): string[] {
-			const theme = this.ctx.ui.theme;
+			let theme: ReturnType<ExtensionContext["ui"]["theme"]> extends never ? never : any;
+			try {
+				theme = (liveCtx ?? this.ctx).ui.theme;
+			} catch {
+				return [];
+			}
 			const tabs = entry().tabs;
 			let expanded = expandedGuess;
 			try {
-				expanded =
-					(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
+				const ui = (liveCtx ?? this.ctx).ui as unknown as { getToolsExpanded?: () => boolean };
+				expanded = ui.getToolsExpanded?.() ?? expandedGuess;
 			} catch {
 				// ctx caducado tras reload/switch: nos quedamos con lo que sabíamos
 			}
@@ -147,44 +153,34 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		handleMouse(event: TuiMouseEvent) {
-			if (event.type !== "press" && event.type !== "click") return undefined;
-			if (event.button !== "left") return undefined;
-			const tabs = entry().tabs;
-			let expanded = expandedGuess;
 			try {
-				expanded =
-					(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
-			} catch {
-				// ctx caducado tras reload/switch: nos quedamos con lo que sabíamos
-			}
-			if (expanded && event.y === tabs.length) {
-				(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
-				expandedGuess = false;
+				if (event.type !== "press" && event.type !== "click") return undefined;
+				if (event.button !== "left") return undefined;
+				const tabs = entry().tabs;
+				const ui = (liveCtx ?? this.ctx).ui as unknown as {
+					getToolsExpanded?: () => boolean;
+					setToolsExpanded?: (value: boolean) => void;
+				};
+				let expanded = expandedGuess;
+				try {
+					expanded = ui.getToolsExpanded?.() ?? expandedGuess;
+				} catch {
+					// ctx caducado tras reload/switch: nos quedamos con lo que sabíamos
+				}
+				if (expanded && event.y === tabs.length) {
+					ui.setToolsExpanded?.(false);
+					expandedGuess = false;
+					return { handled: true };
+				}
+				if (event.y < 0 || event.y >= Math.min(tabs.length, columnRows())) return undefined;
+				this.onPick(event.y);
 				return { handled: true };
+			} catch {
+				return undefined;
 			}
-			if (event.y < 0 || event.y >= Math.min(tabs.length, columnRows())) return undefined;
-			this.onPick(event.y);
-			return { handled: true };
 		}
 
 		onPick: (index: number) => void = () => {};
-		invalidate() {}
-	}
-
-	class CollapseButton implements Component {
-		constructor(private readonly ctx: ExtensionContext) {}
-
-		render(): string[] {
-			return [this.ctx.ui.theme.bg("selectedBg", this.ctx.ui.theme.fg("warning", " ⊟ colapsar todo "))];
-		}
-
-		handleMouse(event: TuiMouseEvent) {
-			import("node:fs").then((fs) => fs.appendFileSync("/tmp/click.log", `${JSON.stringify(event)} rows=${JSON.stringify(this.rows)}\n`)).catch(() => {});
-			if (event.type !== "press" && event.type !== "click") return undefined;
-			(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
-			return { handled: true };
-		}
-
 		invalidate() {}
 	}
 
@@ -194,7 +190,7 @@ export default function (pi: ExtensionAPI) {
 	const safeRender = () => {
 		if (renderBroken) return;
 		try {
-			safeRender();
+			requestRender?.();
 		} catch {
 			renderBroken = true;
 			requestRender = undefined;
@@ -203,7 +199,11 @@ export default function (pi: ExtensionAPI) {
 	let widgetInstalled = false;
 
 	/** Instala el widget una sola vez; los cambios solo piden repintar. */
-	const draw = (ctx: ExtensionContext) => {
+	const draw = (maybeCtx?: ExtensionContext) => {
+		if (maybeCtx) liveCtx = maybeCtx;
+		const ctx = liveCtx;
+		if (!ctx) return;
+		try {
 		if (!ctx.hasUI) return;
 		if (entry().tabs.length === 0) {
 			ctx.ui.setWidget("tabs", undefined);
@@ -222,6 +222,9 @@ export default function (pi: ExtensionAPI) {
 			});
 		}
 		safeRender();
+		} catch {
+			// ctx caducado: se rehace en el siguiente evento
+		}
 	};
 
 	/**
