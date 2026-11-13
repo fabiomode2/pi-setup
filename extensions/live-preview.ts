@@ -39,11 +39,10 @@ export default function (pi: ExtensionAPI) {
 	let thinking = "";
 	let published = "";
 
-	pi.on("agent_start", async (_event, ctx) => {
+	pi.on("agent_start", async () => {
 		thinking = "";
 		published = "";
 		publish("", "");
-		if (ctx.hasUI) ctx.ui.setWorkingMessage("Pensando…");
 	});
 
 	pi.on("message_update", async (event, ctx) => {
@@ -56,29 +55,20 @@ export default function (pi: ExtensionAPI) {
 			if (phrase && phrase !== published) {
 				published = phrase;
 				publish(clip(phrase), "");
-				ctx.ui.setWorkingMessage(`💭 ${clip(phrase)}`);
 			}
 			return;
 		}
-		if (stream.type === "text_delta" && (stream.delta ?? "").trim()) {
-			ctx.ui.setWorkingMessage("Escribiendo…");
-		}
+
 	});
 
 	pi.on("tool_execution_start", async (event, ctx) => {
 		if (!ctx.hasUI) return;
 		const args = (event.args ?? {}) as { command?: string; path?: string; pattern?: string };
 		const detail = args.command ?? args.path ?? args.pattern ?? "";
-		const label = `⚙ ${event.toolName}${detail ? `: ${clip(detail)}` : ""}`;
-		publish("", label);
-		ctx.ui.setWorkingMessage(label);
+		publish("", `⚙ ${event.toolName}${detail ? `: ${clip(detail)}` : ""}`);
 	});
 
-	pi.on("tool_execution_end", async (_event, ctx) => {
-		if (ctx.hasUI) ctx.ui.setWorkingMessage("Pensando…");
-	});
+	pi.on("tool_execution_end", async () => {});
 
-	pi.on("agent_settled", async (_event, ctx) => {
-		if (ctx.hasUI) ctx.ui.setWorkingMessage();
-	});
+	pi.on("agent_settled", async () => {});
 }

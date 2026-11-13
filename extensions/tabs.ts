@@ -40,6 +40,8 @@ export default function (pi: ExtensionAPI) {
 	let busy = false;
 	let expandedGuess = false;
 	let expansionWatcher: ReturnType<typeof setInterval> | undefined;
+	let installedRows = -1;
+	let alive = true;
 	let spinnerIndex = 0;
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	const agents = new Map<string, string>();
@@ -101,7 +103,13 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	const WIDGET_ROWS = 6;
+	/** Filas que ocupará el widget en el próximo render (alto exacto, sin aire). */
+	const columnRows = (): number => {
+		const tabs = entry().tabs.length;
+		const expanded =
+			(globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe?.() ?? expandedGuess;
+		return Math.max(1, Math.min(tabs, 8) + (expanded ? 1 : 0));
+	};
 
 	class TabsColumn implements Component {
 		constructor(private readonly ctx: ExtensionContext) {}
@@ -112,8 +120,9 @@ export default function (pi: ExtensionAPI) {
 			const expanded =
 				(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
 
+			const rows = columnRows();
 			const body: string[] = [];
-			tabs.slice(0, WIDGET_ROWS - 1).forEach((tab, index) => {
+			tabs.slice(0, rows).forEach((tab, index) => {
 				const isActiveTab = tab.path === active;
 				const unread = isUnread(tab);
 				const glyph = isActiveTab && busy ? SPINNER[spinnerIndex % SPINNER.length] : unread ? "●" : "✓";
@@ -128,11 +137,9 @@ export default function (pi: ExtensionAPI) {
 				);
 			});
 
-			if (expanded) body.push(theme.fg("warning", " ⊟ colapsar todo"));
-			while (body.length < WIDGET_ROWS) body.push("");
+			if (expanded && body.length < rows) body.push(theme.fg("warning", " ⊟ colapsar todo"));
 
-			// Alto fijo: todas las filas ocupan el mismo ancho y siempre son WIDGET_ROWS.
-			return body.slice(0, WIDGET_ROWS).map((text) => {
+			return body.slice(0, rows).map((text) => {
 				const line = `${theme.fg("borderAccent", "│")} ${text}${" ".repeat(Math.max(0, COLUMN_WIDTH - 2 - visibleWidth(text)))}`;
 				return `${" ".repeat(Math.max(0, width - visibleWidth(line)))}${line}`;
 			});
@@ -149,7 +156,7 @@ export default function (pi: ExtensionAPI) {
 				expandedGuess = false;
 				return { handled: true };
 			}
-			if (event.y < 0 || event.y >= Math.min(tabs.length, WIDGET_ROWS - 1)) return undefined;
+			if (event.y < 0 || event.y >= Math.min(tabs.length, columnRows())) return undefined;
 			this.onPick(event.y);
 			return { handled: true };
 		}
@@ -186,8 +193,10 @@ export default function (pi: ExtensionAPI) {
 			widgetInstalled = false;
 			return;
 		}
-		if (!widgetInstalled) {
+		const rows = columnRows();
+		if (!widgetInstalled || rows !== installedRows) {
 			widgetInstalled = true;
+			installedRows = rows;
 			const column = new TabsColumn(ctx);
 			column.onPick = (index) => requestSwitch(ctx, index);
 			ctx.ui.setWidget("tabs", (tui) => {
@@ -195,6 +204,7 @@ export default function (pi: ExtensionAPI) {
 				return column;
 			});
 		}
+		alive = true;
 		(globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe = () =>
 			(ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.();
 		watchExpansion();
@@ -206,10 +216,23 @@ export default function (pi: ExtensionAPI) {
 	const watchExpansion = () => {
 		if (expansionWatcher) return;
 		expansionWatcher = setInterval(() => {
-			const current = (globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe?.();
-			if (current === undefined || current === expandedGuess) return;
-			expandedGuess = current;
-			requestRender?.();
+			if (!alive) {
+				clearInterval(expansionWatcher);
+				expansionWatcher = undefined;
+				return;
+			}
+			// Tras cambiar de sesión el ctx caduca: cualquier acceso lanza.
+			try {
+				const current = (globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe?.();
+				if (current === undefined || current === expandedGuess) return;
+				expandedGuess = current;
+				requestRender?.();
+			} catch {
+				alive = false;
+				(globalThis as { __piExpandedProbe?: unknown }).__piExpandedProbe = undefined;
+				clearInterval(expansionWatcher);
+				expansionWatcher = undefined;
+			}
 		}, 700);
 		(expansionWatcher as unknown as { unref?: () => void }).unref?.();
 	};

@@ -58,6 +58,7 @@ export default function (pi: ExtensionAPI) {
 	const stats = loadStats();
 	let startedAt = 0;
 	let currentKey: string | undefined;
+	let lastTimeout: number | undefined;
 
 	const clearBadge = () => {
 		globalThis.__piBashEtaBadge = undefined;
@@ -72,6 +73,7 @@ export default function (pi: ExtensionAPI) {
 		currentKey = commandKey(command);
 		startedAt = Date.now();
 		const timeout = typeof args.timeout === "number" && args.timeout > 0 ? args.timeout : undefined;
+		lastTimeout = timeout;
 		const known = stats[currentKey];
 		const estimate = known && known.n > 0 ? known.avg : undefined;
 
@@ -86,9 +88,18 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_execution_end", async (event) => {
 		if (event.toolName !== "bash") return;
-		clearBadge();
 		if (!currentKey || startedAt === 0) return;
 		const seconds = (Date.now() - startedAt) / 1000;
+		// Badge final: lo que tardó + lo estimado + el techo. Se queda puesto
+		// hasta el siguiente bash, para que se lea en la fila ya colapsada.
+		const est = stats[currentKey]?.n ? stats[currentKey].avg : undefined;
+		const ceiling = lastTimeout;
+		globalThis.__piBashEtaBadge = () => {
+			const parts: string[] = [`${formatSeconds(seconds)}`];
+			if (est !== undefined) parts.push(`~${formatSeconds(est)}`);
+			if (ceiling !== undefined) parts.push(`máx ${formatSeconds(ceiling)}`);
+			return `⏱ ${parts.join(" · ")}`;
+		};
 		const key = currentKey;
 		currentKey = undefined;
 		startedAt = 0;
