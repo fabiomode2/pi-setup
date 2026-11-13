@@ -32,6 +32,7 @@ Mi configuración de [Pi](https://pi.dev): extensiones propias, parches que sobr
 | Extensión | Qué hace |
 | --- | --- |
 | `ask-user.ts` | Tool `ask_user`: el modelo pregunta y espera respuesta en la TUI. |
+| `lazy-tools.ts` | Arranca solo con `read`, `bash`, `edit`, `write` y `load_tools`; el resto (web, memoria, skills, subagentes) se carga bajo demanda. ~7K tokens menos de contexto inicial. |
 | `status.ts` | `/status`: consulta paralela al mismo modelo, sin interrumpir. Queda como tarjeta en el chat. |
 | `zoom.ts` | `/zoom` o `alt+z`: última imagen a pantalla completa, `+`/`-` para zoom. |
 | `copy-cmd.ts` | `alt+c` o `/cc`: copia el último comando bash. |
@@ -77,6 +78,15 @@ install.sh      instalador
 
 - `defaultThinkingLevel: max`, `hideThinkingBlock: true`
 - `ctrl+p` liberado de los built-ins (`keybindings.json`) para el menú rápido
+
+## Contexto bajo demanda
+
+`lazy-tools.ts` deja declaradas al arrancar solo las built-in (`read`, `bash`, `edit`, `write`) y `load_tools`. El resto de tools sigue registrada pero oculta: el modelo las activa con `load_tools({ tools: ["web_browser", "pdf_extract"] })` (o `["*"]`) y quedan disponibles en la siguiente llamada.
+
+- El catálogo de tools cargables va en la descripción de `load_tools`, así no se pierden los schemas completos ni sus guidelines.
+- No se aplica en subagentes: sus sesiones in-memory conservan las tools que les pasa el padre.
+- Al reanudar sesión se restaura el loadout que el transcript declara.
+- Medido sobre esta config: ~12.5K → ~5.4K tokens de contexto inicial.
 
 ## Créditos
 
