@@ -39,6 +39,7 @@ export default function (pi: ExtensionAPI) {
 	let active: string | undefined;
 	let busy = false;
 	let expandedGuess = false;
+	let expansionWatcher: ReturnType<typeof setInterval> | undefined;
 	let spinnerIndex = 0;
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	const agents = new Map<string, string>();
@@ -194,7 +195,23 @@ export default function (pi: ExtensionAPI) {
 				return column;
 			});
 		}
+		(globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe = () =>
+			(ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.();
+		watchExpansion();
 		requestRender?.();
+	};
+
+	// La expansión por ratón no pasa por nosotros: sondeamos el estado real para
+	// que el botón "colapsar todo" aparezca también cuando se expande con clic.
+	const watchExpansion = () => {
+		if (expansionWatcher) return;
+		expansionWatcher = setInterval(() => {
+			const current = (globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe?.();
+			if (current === undefined || current === expandedGuess) return;
+			expandedGuess = current;
+			requestRender?.();
+		}, 700);
+		(expansionWatcher as unknown as { unref?: () => void }).unref?.();
 	};
 
 	/**
