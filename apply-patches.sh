@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
-# Aplica los diffs de patches/ sobre los paquetes npm instalados.
-set -uo pipefail
+# Reaplica los parches de paquetes npm desde patches/manifest.json.
+# Los parches del bundle de Pi los gestiona solo la extensión core-patch.ts.
+set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-APPLY=0
-[ "${1:-}" = "--apply" ] && APPLY=1
 
-for diff_file in "$HERE"/patches/*.diff; do
-  name=$(basename "$diff_file")
-  target=$(grep -m1 '^--- a/' "$diff_file" | sed 's|^--- a/||')
-  target_path="$AGENT_DIR/$target"
-  if [ ! -f "$target_path" ]; then
-    echo "  · $name: no está instalado ($target)"
-    continue
-  fi
-  if patch -p1 --dry-run -d "$AGENT_DIR" < "$diff_file" >/dev/null 2>&1; then
-    if [ "$APPLY" = "1" ]; then
-      patch -p1 -d "$AGENT_DIR" < "$diff_file" >/dev/null && echo "  ✓ aplicado: $name"
-    else
-      echo "  · aplicable: $name"
-    fi
+mkdir -p "$AGENT_DIR/patches" "$AGENT_DIR/bin"
+cp "$HERE"/patches/manifest.json "$AGENT_DIR/patches/manifest.json"
+cp -r "$HERE"/patches/files "$AGENT_DIR/patches/"
+install -m 755 "$HERE"/bin/repatch "$AGENT_DIR/bin/repatch"
+
+diffs=0
+for f in "$AGENT_DIR"/patches/files/*; do
+  name=$(basename "$f")
+  target=$(python3 - "$AGENT_DIR/patches/manifest.json" "$name" <<'PY'
+import json, sys
+manifest_path, stored = sys.argv[1], sys.argv[2]
+for entry in json.load(open(manifest_path)):
+    if entry["stored"] == stored:
+        print(entry["target"]); break
+PY
+)
+  if [ -n "${target:-}" ] && cmp -s "$f" "$AGENT_DIR/$target"; then
+    echo "  = $name"
   else
-    echo "  · $name: ya aplicado o versión distinta"
+    diffs=$((diffs + 1))
   fi
 done
 
-[ "$APPLY" = "0" ] && echo "  (dry run; usa --apply para aplicar)"
+"$AGENT_DIR/bin/repatch"
+echo "Reinicia Pi si hubo cambios."

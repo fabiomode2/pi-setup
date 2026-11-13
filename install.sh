@@ -59,4 +59,4 @@ done
 
 echo
 echo "Listo. Reinicia Pi."
-echo "Opcional: ./apply-patches.sh --apply   (arranque más rápido + splash a pantalla completa)"
+echo "Opcional: ./apply-patches.sh   (reaplica los parches npm; core-patch.ts se encarga del bundle)"
