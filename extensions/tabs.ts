@@ -39,9 +39,7 @@ export default function (pi: ExtensionAPI) {
 	let active: string | undefined;
 	let busy = false;
 	let expandedGuess = false;
-	let expansionWatcher: ReturnType<typeof setInterval> | undefined;
 	let installedRows = -1;
-	let alive = true;
 	let spinnerIndex = 0;
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	const agents = new Map<string, string>();
@@ -106,9 +104,7 @@ export default function (pi: ExtensionAPI) {
 	/** Filas que ocupará el widget en el próximo render (alto exacto, sin aire). */
 	const columnRows = (): number => {
 		const tabs = entry().tabs.length;
-		const expanded =
-			(globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe?.() ?? expandedGuess;
-		return Math.max(1, Math.min(tabs, 8) + (expanded ? 1 : 0));
+		return Math.max(1, Math.min(tabs, 8) + (expandedGuess ? 1 : 0));
 	};
 
 	class TabsColumn implements Component {
@@ -117,8 +113,13 @@ export default function (pi: ExtensionAPI) {
 		render(width: number): string[] {
 			const theme = this.ctx.ui.theme;
 			const tabs = entry().tabs;
-			const expanded =
-				(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
+			let expanded = expandedGuess;
+			try {
+				expanded =
+					(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
+			} catch {
+				// ctx caducado tras reload/switch: nos quedamos con lo que sabíamos
+			}
 
 			const rows = columnRows();
 			const body: string[] = [];
@@ -149,8 +150,13 @@ export default function (pi: ExtensionAPI) {
 			if (event.type !== "press" && event.type !== "click") return undefined;
 			if (event.button !== "left") return undefined;
 			const tabs = entry().tabs;
-			const expanded =
-				(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
+			let expanded = expandedGuess;
+			try {
+				expanded =
+					(this.ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.() ?? expandedGuess;
+			} catch {
+				// ctx caducado tras reload/switch: nos quedamos con lo que sabíamos
+			}
 			if (expanded && event.y === tabs.length) {
 				(this.ctx.ui as unknown as { setToolsExpanded?: (value: boolean) => void }).setToolsExpanded?.(false);
 				expandedGuess = false;
@@ -183,6 +189,17 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	let requestRender: (() => void) | undefined;
+	let renderBroken = false;
+	/** Nunca dejar escapar un throw de un tui caducado (reload/sesión cerrada). */
+	const safeRender = () => {
+		if (renderBroken) return;
+		try {
+			safeRender();
+		} catch {
+			renderBroken = true;
+			requestRender = undefined;
+		}
+	};
 	let widgetInstalled = false;
 
 	/** Instala el widget una sola vez; los cambios solo piden repintar. */
@@ -204,37 +221,7 @@ export default function (pi: ExtensionAPI) {
 				return column;
 			});
 		}
-		alive = true;
-		(globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe = () =>
-			(ctx.ui as unknown as { getToolsExpanded?: () => boolean }).getToolsExpanded?.();
-		watchExpansion();
-		requestRender?.();
-	};
-
-	// La expansión por ratón no pasa por nosotros: sondeamos el estado real para
-	// que el botón "colapsar todo" aparezca también cuando se expande con clic.
-	const watchExpansion = () => {
-		if (expansionWatcher) return;
-		expansionWatcher = setInterval(() => {
-			if (!alive) {
-				clearInterval(expansionWatcher);
-				expansionWatcher = undefined;
-				return;
-			}
-			// Tras cambiar de sesión el ctx caduca: cualquier acceso lanza.
-			try {
-				const current = (globalThis as { __piExpandedProbe?: () => boolean | undefined }).__piExpandedProbe?.();
-				if (current === undefined || current === expandedGuess) return;
-				expandedGuess = current;
-				requestRender?.();
-			} catch {
-				alive = false;
-				(globalThis as { __piExpandedProbe?: unknown }).__piExpandedProbe = undefined;
-				clearInterval(expansionWatcher);
-				expansionWatcher = undefined;
-			}
-		}, 700);
-		(expansionWatcher as unknown as { unref?: () => void }).unref?.();
+		safeRender();
 	};
 
 	/**
@@ -369,7 +356,7 @@ export default function (pi: ExtensionAPI) {
 		stopPoll();
 		pollTimer = setInterval(() => {
 			spinnerIndex++;
-			requestRender?.();
+			safeRender();
 		}, 900);
 		(pollTimer as unknown as { unref?: () => void }).unref?.();
 	});
@@ -383,7 +370,11 @@ export default function (pi: ExtensionAPI) {
 		stopPoll();
 		widgetInstalled = false;
 		requestRender = undefined;
-		if (ctx.hasUI) ctx.ui.setWidget("tabs", undefined);
+		try {
+			if (ctx.hasUI) ctx.ui.setWidget("tabs", undefined);
+		} catch {
+			// ctx ya caducado: no hay nada que desmontar
+		}
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {

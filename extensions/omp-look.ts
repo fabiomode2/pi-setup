@@ -49,7 +49,11 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_settled", async (_event, ctx) => {
 		clearInterval(wordTimer);
 		wordTimer = undefined;
-		if (ctx.hasUI) ctx.ui.setWorkingMessage();
+		try {
+			if (ctx.hasUI) ctx.ui.setWorkingMessage();
+		} catch {
+			// ctx caducado tras reload
+		}
 	});
 
 	pi.on("session_shutdown", async () => {

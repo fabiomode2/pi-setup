@@ -42,7 +42,12 @@ export function commandKey(command: string): string {
 }
 
 export function formatSeconds(total: number): string {
-	const s = Math.max(0, Math.round(total));
+	// Por debajo de 10s se enseña un decimal: si no, un comando rápido marca "0s"
+	// y parece que el reloj no avanza.
+	const raw = Math.max(0, total);
+	if (raw < 0.1) return "<0.1s";
+	if (raw < 10) return `${raw.toFixed(1)}s`;
+	const s = Math.round(raw);
 	if (s < 60) return `${s}s`;
 	const m = Math.floor(s / 60);
 	if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
@@ -50,8 +55,8 @@ export function formatSeconds(total: number): string {
 }
 
 declare global {
-	// pi-minimalist lo consulta al pintar cada fila de tool.
-	var __piBashEtaBadge: (() => string) | undefined;
+	// pi-minimalist lo consulta al pintar cada fila; sin id devuelve el bash en curso.
+	var __piBashEtaBadge: ((toolCallId?: string) => string) | undefined;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -59,9 +64,16 @@ export default function (pi: ExtensionAPI) {
 	let startedAt = 0;
 	let currentKey: string | undefined;
 	let lastTimeout: number | undefined;
+	// Badge por llamada: cada fila enseña el suyo y ninguno se queda pegado al resto.
+	const badges = new Map<string, string>();
+	let runningId: string | undefined;
 
-	const clearBadge = () => {
-		globalThis.__piBashEtaBadge = undefined;
+	const trim = () => {
+		while (badges.size > 60) {
+			const oldest = badges.keys().next().value;
+			if (oldest === undefined) break;
+			badges.delete(oldest);
+		}
 	};
 
 	pi.on("tool_execution_start", async (event) => {
@@ -77,12 +89,23 @@ export default function (pi: ExtensionAPI) {
 		const known = stats[currentKey];
 		const estimate = known && known.n > 0 ? known.avg : undefined;
 
-		clearBadge();
-		globalThis.__piBashEtaBadge = () => {
-			const parts: string[] = [];
-			if (estimate !== undefined) parts.push(`~${formatSeconds(estimate)}`);
-			if (timeout !== undefined) parts.push(`máx ${formatSeconds(timeout)}`);
-			return parts.length > 0 ? `· ${parts.join(" · ")}` : "";
+		runningId = event.toolCallId;
+		const extra: string[] = [];
+		if (estimate !== undefined) extra.push(`~${formatSeconds(estimate)}`);
+		if (timeout !== undefined) extra.push(`máx ${formatSeconds(timeout)}`);
+		const started = Date.now();
+		if (extra.length > 0) badges.set(event.toolCallId, `· ${extra.join(" · ")}`);
+		else badges.delete(event.toolCallId);
+		trim();
+
+		globalThis.__piBashEtaBadge = (toolCallId?: string) => {
+			const id = toolCallId ?? runningId;
+			if (!id) return "";
+			if (id === runningId) {
+				const live = extra.length > 0 ? ` · ${extra.join(" · ")}` : "";
+				return `⏱ ${formatSeconds((Date.now() - started) / 1000)}${live}`;
+			}
+			return badges.get(id) ?? "";
 		};
 	});
 
@@ -94,12 +117,12 @@ export default function (pi: ExtensionAPI) {
 		// hasta el siguiente bash, para que se lea en la fila ya colapsada.
 		const est = stats[currentKey]?.n ? stats[currentKey].avg : undefined;
 		const ceiling = lastTimeout;
-		globalThis.__piBashEtaBadge = () => {
-			const parts: string[] = [`${formatSeconds(seconds)}`];
-			if (est !== undefined) parts.push(`~${formatSeconds(est)}`);
-			if (ceiling !== undefined) parts.push(`máx ${formatSeconds(ceiling)}`);
-			return `⏱ ${parts.join(" · ")}`;
-		};
+		runningId = undefined;
+		const finalParts: string[] = [`${formatSeconds(seconds)}`];
+		if (est !== undefined) finalParts.push(`~${formatSeconds(est)}`);
+		if (ceiling !== undefined) finalParts.push(`máx ${formatSeconds(ceiling)}`);
+		badges.set(event.toolCallId, `⏱ ${finalParts.join(" · ")}`);
+		trim();
 		const key = currentKey;
 		currentKey = undefined;
 		startedAt = 0;
@@ -109,7 +132,18 @@ export default function (pi: ExtensionAPI) {
 		saveStats(stats);
 	});
 
+	pi.on("agent_start", async () => {
+		badges.clear();
+		runningId = undefined;
+		globalThis.__piBashEtaBadge = (toolCallId?: string) => {
+			const id = toolCallId ?? runningId;
+			return id ? (badges.get(id) ?? "") : "";
+		};
+	});
+
 	pi.on("session_shutdown", async () => {
-		clearBadge();
+		badges.clear();
+		runningId = undefined;
+		globalThis.__piBashEtaBadge = undefined;
 	});
 }
