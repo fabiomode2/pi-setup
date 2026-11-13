@@ -1,8 +1,7 @@
 /**
  * /status — pregunta al modelo "¿cómo va esto?" con el mismo contexto, sin
- * interrumpir el turno. El resultado queda en un panel flotante, y también en
- * una línea fija encima del editor: al acabar muestra "Estado dado · clic para
- * ver" y al pulsarla se vuelve a abrir el panel.
+ * interrumpir el turno. El informe se apunta en el chat como una tarjeta
+ * (queda arriba, como cualquier mensaje) y se puede reabrir en grande.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -10,48 +9,82 @@ const QUESTION =
 	"Reporta brevemente el estado de esta sesión, para mí (el usuario). En 3-5 líneas: qué estás haciendo ahora, cómo va, qué queda pendiente y una estimación aproximada. Sin código, directo.";
 
 let lastText: string | undefined;
-let running = false;
+let latestCtx: ExtensionContext | undefined;
 
-/** Panel con el informe; se cierra con Esc o con un clic. */
+const wrap = (text: string, width: number): string[] => {
+	const out: string[] = [];
+	for (const raw of text.split("\n")) {
+		if (raw.trim().length === 0) {
+			out.push("");
+			continue;
+		}
+		for (let i = 0; i < raw.length; i += width) out.push(raw.slice(i, i + width));
+	}
+	return out;
+};
+
+/** Panel grande con el informe completo. */
 async function showPanel(ctx: ExtensionContext, text: string): Promise<void> {
-	await ctx.ui.custom<void>((_tui, theme, keybindings, done) => {
-		const source = text.split("\n");
-		return {
+	await ctx.ui.custom<void>((_tui, theme, keybindings, done) => ({
+		render(width: number) {
+			const usable = Math.max(20, Math.min(width - 2, 84));
+			return [
+				theme.fg("accent", "─".repeat(usable)),
+				theme.bold(theme.fg("accent", " Estado de la sesión")),
+				"",
+				...wrap(text, usable - 1).map((line) => ` ${line}`),
+				"",
+				theme.fg("muted", " esc / clic para cerrar"),
+			].map((line) => line.slice(0, width));
+		},
+		handleInput(data: string) {
+			if (keybindings.matches(data, "tui.select.cancel")) done(undefined);
+		},
+		handleMouse() {
+			done(undefined);
+			return { handled: true } as const;
+		},
+		invalidate() {},
+	}));
+}
+
+export default function (pi: ExtensionAPI) {
+	// Tarjeta dentro del transcript: se queda arriba con el resto de mensajes.
+	pi.registerEntryRenderer("status-card", (entry, _options, theme) => {
+		const data = entry.data as { text: string; at: number };
+		const lines = data.text.split("\n");
+		const component = {
 			render(width: number) {
-				const usable = Math.max(20, Math.min(width - 2, 84));
-				const lines: string[] = [];
-				for (const raw of source) {
-					if (raw.length === 0) lines.push("");
-					else for (let i = 0; i < raw.length; i += usable) lines.push(raw.slice(i, i + usable));
+				const usable = Math.max(20, Math.min(width - 4, 80));
+				const shown: string[] = [];
+				shown.push(theme.fg("accent", "─".repeat(Math.min(usable, width - 2))));
+				shown.push(theme.bold(theme.fg("accent", " Estado de la sesión")));
+				for (const line of wrap(data.text, usable - 1).slice(0, 8)) shown.push(` ${theme.fg("text", line)}`);
+				if (lines.length > 0) shown.push(theme.fg("muted", " clic para abrir el informe completo"));
+				return shown.map((line) => line.slice(0, width));
+			},
+			handleMouse(event: { type?: string; button?: string }) {
+				if (event.type !== "press" && event.type !== "click") return undefined;
+				if (event.button !== "left") return undefined;
+				if (!latestCtx) return undefined;
+				try {
+					void showPanel(latestCtx, data.text);
+				} catch {
+					return undefined;
 				}
-				return [
-					theme.fg("accent", "─".repeat(usable)),
-					theme.bold(theme.fg("accent", " Estado de la sesión")),
-					"",
-					...lines.map((line) => ` ${line}`),
-					"",
-					theme.fg("muted", " esc / clic para cerrar"),
-				].map((line) => line.slice(0, width));
-			},
-			handleInput(data: string) {
-				if (keybindings.matches(data, "tui.select.cancel")) done(undefined);
-			},
-			handleMouse() {
-				done(undefined);
 				return { handled: true } as const;
 			},
 			invalidate() {},
 		};
+		return component;
 	});
-}
 
-export default function (pi: ExtensionAPI) {
 	pi.registerCommand("status", {
 		description: "Pregunta al modelo cómo va la tarea, sin interrumpirla",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) return;
+			latestCtx = ctx;
 			const extra = (args ?? "").trim();
-			running = true;
 			ctx.ui.notify("Pidiendo estado…", "info");
 
 			const projection = ctx.sessionManager.buildSessionContext();
@@ -66,7 +99,6 @@ export default function (pi: ExtensionAPI) {
 
 			const model = ctx.model;
 			if (!model) {
-				running = false;
 				ctx.ui.notify("Sin modelo activo", "error");
 				return;
 			}
@@ -81,51 +113,18 @@ export default function (pi: ExtensionAPI) {
 					if (event.type === "text_delta") text += event.delta;
 				}
 			} catch (error) {
-				running = false;
 				ctx.ui.notify(`No se pudo preguntar: ${(error as Error).message}`, "error");
 				return;
 			}
 
-			running = false;
 			if (!text.trim()) {
 				ctx.ui.notify("El modelo no devolvió nada", "warning");
 				return;
 			}
 
 			lastText = text.trim();
-			installLine(ctx);
+			pi.appendEntry("status-card", { text: lastText, at: Date.now() });
 			await showPanel(ctx, lastText);
 		},
 	});
-}
-
-/** Línea fija encima del editor; al pulsarla reabre el último informe. */
-function installLine(ctx: ExtensionContext): void {
-	const reuse = (globalThis as { __piStatusCtx?: ExtensionContext }).__piStatusCtx;
-	void reuse;
-	(globalThis as { __piStatusCtx?: ExtensionContext }).__piStatusCtx = ctx;
-
-	const line = {
-		render(width: number) {
-			const theme = ctx.ui.theme;
-			const body = running
-				? theme.fg("warning", " ⏳ Pidiendo estado…")
-				: theme.fg("success", " ✔ Estado dado") + theme.fg("muted", " · clic para ver");
-			return [body.slice(0, width)].map((text) => `${text}${" ".repeat(Math.max(0, width - text.length))}`);
-		},
-		handleMouse(event: { type?: string; button?: string }) {
-			if (event.type !== "press" && event.type !== "click") return undefined;
-			if (event.button !== "left") return undefined;
-			if (!lastText) return undefined;
-			void showPanel(ctx, lastText);
-			return { handled: true } as const;
-		},
-		invalidate() {},
-	};
-
-	try {
-		ctx.ui.setWidget("status-line", () => line);
-	} catch {
-		// ctx caducado tras cambiar de sesión: se rehace en el siguiente /status
-	}
 }

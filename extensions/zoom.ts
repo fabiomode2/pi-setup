@@ -8,7 +8,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Image } from "@earendil-works/pi-tui";
 
-type ImagePart = { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+type ImagePart = { type: "image"; data: string; mimeType: string };
 
 function lastImage(messages: readonly unknown[]): ImagePart | undefined {
 	let found: ImagePart | undefined;
@@ -16,7 +16,8 @@ function lastImage(messages: readonly unknown[]): ImagePart | undefined {
 		const content = (message as { content?: unknown }).content;
 		if (!Array.isArray(content)) continue;
 		for (const part of content) {
-			if ((part as { type?: string }).type === "image") found = part as ImagePart;
+			const candidate = part as { type?: string; data?: string; mimeType?: string };
+			if (candidate.type === "image" && typeof candidate.data === "string") found = candidate as ImagePart;
 		}
 	}
 	return found;
@@ -36,16 +37,16 @@ export default function (pi: ExtensionAPI) {
 			await ctx.ui.custom<void>((tui, theme, keybindings, done) => {
 				let cells = 100;
 				let image = new Image(
-					part.source.data,
-					part.source.media_type,
+					part.data,
+					part.mimeType,
 					{ fallbackColor: (text: string) => theme.fg("muted", text) },
 					{ maxWidthCells: cells },
 				);
 
 				const rebuild = () => {
 					image = new Image(
-						part.source.data,
-						part.source.media_type,
+						part.data,
+						part.mimeType,
 						{ fallbackColor: (text: string) => theme.fg("muted", text) },
 						{ maxWidthCells: cells },
 					);
@@ -85,8 +86,8 @@ export default function (pi: ExtensionAPI) {
 			void part;
 			await ctx.ui.custom<void>((_tui, theme, keybindings, done) => {
 				const image = new Image(
-					part.source.data,
-					part.source.media_type,
+					part.data,
+					part.mimeType,
 					{ fallbackColor: (text: string) => theme.fg("muted", text) },
 					{ maxWidthCells: 100 },
 				);
